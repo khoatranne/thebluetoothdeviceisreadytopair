@@ -1,79 +1,120 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>ESP32 Control</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="style.css">
-    <link rel="icon" href="favicon.ico" type="image/x-icon">
-  </head>
-  <body>
-    <h1>Self-Balancing Robot Control</h1>
-    <button class="connectButton" onclick="connect()">🔌 Connect</button>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PID Tuner</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <h1>Self-Balancing Robot PID Controller</h1>
 
-    <div class="card-grid">
-      <div class="card">
-        <h2>Control PID Parameters</h2>
-        <label class="gray-label">Kp</label>
-        <input type="number" id="kpInput" step="0.1" placeholder="e.g. 10.0"><br>
-        <label class="gray-label">Ki</label>
-        <input type="number" id="kiInput" step="0.01" placeholder="e.g. 0.0"><br>
-        <label class="gray-label">Kd</label>
-        <input type="number" id="kdInput" step="0.1" placeholder="e.g. 1.0"><br>
-        <label class="gray-label">Target Angle</label>
-        <input type="number" id="targetAngleInput" placeholder="e.g. 0"><br>
-        <label class="gray-label">Offset Angle</label>
-        <input type="number" id="offsetAngleInput" placeholder="e.g. 0"><br><br>
-        <button class="onButton" onclick="sendPID()">Send PID Params</button>
-        <p>Last sent: <span id="latestValueSent">None</span></p>
-      </div>
-    </div>
+  <section>
+    <label for="kp">Kp: <span id="kpVal">0</span></label>
+    <input type="range" id="kp" min="0" max="10" step="0.1" value="0" />
 
-    <script>
-      let bleDevice;
-      let bleServer;
-      let bleServiceFound;
-      let ledCharacteristic;
-      const SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214";
-      const CHARACTERISTIC_UUID = "19b10002-e8f2-537e-4f6c-d104768a1214";
+    <label for="ki">Ki: <span id="kiVal">0</span></label>
+    <input type="range" id="ki" min="0" max="10" step="0.1" value="0" />
 
-      const latestValueSent = document.getElementById("latestValueSent");
+    <label for="kd">Kd: <span id="kdVal">0</span></label>
+    <input type="range" id="kd" min="0" max="10" step="0.1" value="0" />
 
-      async function connect() {
-        try {
-          bleDevice = await navigator.bluetooth.requestDevice({
-            filters: [{ namePrefix: 'ESP32' }],
-            optionalServices: [SERVICE_UUID]
-          });
+    <label for="angle">Target Angle: <span id="angleVal">0</span></label>
+    <input type="range" id="angle" min="-30" max="30" step="1" value="0" />
 
-          bleServer = await bleDevice.gatt.connect();
-          bleServiceFound = await bleServer.getPrimaryService(SERVICE_UUID);
-          ledCharacteristic = await bleServiceFound.getCharacteristic(CHARACTERISTIC_UUID);
+    <button id="connect">Connect to Robot</button>
+    <button id="send">Send Parameters</button>
+    <button id="saveSetup">Save Current Setup</button>
+  </section>
 
-          alert("✅ Connected to ESP32!");
-        } catch (error) {
-          console.error("Connection failed!", error);
-          alert("❌ Connection failed.");
+  <canvas id="pidChart" width="600" height="300"></canvas>
+
+  <h2>Saved Setups</h2>
+  <ul id="setupList"></ul>
+
+  <script>
+    const kp = document.getElementById('kp');
+    const ki = document.getElementById('ki');
+    const kd = document.getElementById('kd');
+    const angle = document.getElementById('angle');
+    const kpVal = document.getElementById('kpVal');
+    const kiVal = document.getElementById('kiVal');
+    const kdVal = document.getElementById('kdVal');
+    const angleVal = document.getElementById('angleVal');
+    const setupList = document.getElementById('setupList');
+
+    let device;
+    let characteristic;
+
+    [kp, ki, kd, angle].forEach(input => {
+      input.addEventListener('input', () => {
+        document.getElementById(input.id + 'Val').textContent = input.value;
+        updateChart();
+      });
+    });
+
+    document.getElementById('connect').addEventListener('click', async () => {
+      try {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: "ESP32" }],
+          optionalServices: ["0000ffe0-0000-1000-8000-00805f9b34fb"]
+        });
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService("0000ffe0-0000-1000-8000-00805f9b34fb");
+        characteristic = await service.getCharacteristic("0000ffe1-0000-1000-8000-00805f9b34fb");
+        alert("Connected to ESP32");
+      } catch (error) {
+        console.error(error);
+        alert("Failed to connect");
+      }
+    });
+
+    document.getElementById('send').addEventListener('click', () => {
+      if (!characteristic) return alert("Not connected");
+      const data = `${kp.value},${ki.value},${kd.value},${angle.value}\n`;
+      const encoder = new TextEncoder();
+      characteristic.writeValue(encoder.encode(data));
+    });
+
+    document.getElementById('saveSetup').addEventListener('click', () => {
+      const setup = {
+        kp: kp.value,
+        ki: ki.value,
+        kd: kd.value,
+        angle: angle.value,
+        time: new Date().toLocaleTimeString()
+      };
+      const li = document.createElement('li');
+      li.textContent = `(${setup.time}) Kp: ${setup.kp}, Ki: ${setup.ki}, Kd: ${setup.kd}, Angle: ${setup.angle}`;
+      setupList.appendChild(li);
+    });
+
+    const ctx = document.getElementById('pidChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: ['Kp', 'Ki', 'Kd', 'Angle'],
+        datasets: [{
+          label: 'PID Values',
+          data: [0, 0, 0, 0],
+          backgroundColor: 'rgba(54, 162, 235, 0.2)',
+          borderColor: 'rgba(54, 162, 235, 1)',
+          borderWidth: 2
+        }]
+      },
+      options: {
+        responsive: false,
+        scales: {
+          y: { beginAtZero: true }
         }
       }
+    });
 
-      async function sendPID() {
-        const kp = parseFloat(document.getElementById('kpInput').value);
-        const ki = parseFloat(document.getElementById('kiInput').value);
-        const kd = parseFloat(document.getElementById('kdInput').value);
-        const target = parseFloat(document.getElementById('targetAngleInput').value);
-        const offset = parseFloat(document.getElementById('offsetAngleInput').value);
-
-        const dataString = `P${kp},I${ki},D${kd},T${target},O${offset}\n`;
-        console.log("Sending PID string:", dataString);
-
-        if (ledCharacteristic) {
-          const encoder = new TextEncoder();
-          await ledCharacteristic.writeValue(encoder.encode(dataString));
-          latestValueSent.textContent = dataString;
-        } else {
-          alert("❗ Not connected to BLE!");
-        }
-      }
-    </script>
-  </body>
+    function updateChart() {
+      chart.data.datasets[0].data = [kp.value, ki.value, kd.value, angle.value];
+      chart.update();
+    }
+  </script>
+</body>
 </html>
